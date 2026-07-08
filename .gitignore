@@ -1,0 +1,23 @@
+# Node / Build files
+node_modules/
+dist/
+.next/
+out/
+build/
+*.log
+
+# Environment variables & secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backups & Temp files
+temp-repo/

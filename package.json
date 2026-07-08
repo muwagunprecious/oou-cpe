@@ -1,0 +1,11 @@
+{
+  "name": "cpe-smart-portal-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "init-db": "node database/init-db.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}
