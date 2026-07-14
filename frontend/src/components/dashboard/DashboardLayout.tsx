@@ -91,12 +91,17 @@ export default function DashboardLayout({
         {/* User info + sign out */}
         <div className="relative border-t border-white/5 px-4 py-4">
           <div className="flex items-center gap-3 px-2 py-2 rounded-2xl hover:bg-white/5 transition group">
-            <div className="h-9 w-9 rounded-xl bg-green-400/20 flex items-center justify-center text-green-400 text-xs font-bold shrink-0">
-              {initials}
+            <div className="h-9 w-9 rounded-xl bg-green-400/20 flex items-center justify-center text-green-400 text-xs font-bold shrink-0 overflow-hidden border border-white/10">
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                initials
+              )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{profile?.full_name || "—"}</p>
-              <p className="text-xs text-white/40 truncate capitalize">{profile?.role}</p>
+              <p className="text-sm font-medium truncate leading-tight">{profile?.full_name || "—"}</p>
+              <p className="text-xs text-white/55 truncate mt-0.5 leading-none">{profile?.email || "—"}</p>
+              <p className="text-[10px] text-green-400/80 font-medium uppercase tracking-wider mt-1.5 leading-none">{profile?.role}</p>
             </div>
             <button
               onClick={handleSignOut}
