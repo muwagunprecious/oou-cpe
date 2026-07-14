@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   LayoutGrid, ClipboardList, CalendarCheck, MessageCircle, Newspaper, MapPin,
-  Upload, Loader2, AlertCircle, CheckCircle2, Clock
+  Upload, Loader2, AlertCircle, CheckCircle2, Clock, Camera, User, LogOut
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -23,7 +23,7 @@ const TABS = [
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function StudentDashboard() {
-  const { profile, loading: authLoading } = useAuth();
+  const { profile, loading: authLoading, session, refreshProfile, signOut } = useAuth();
   const [active, setActive] = useState("overview");
 
   const [classes, setClasses] = useState<any[]>([]);
@@ -107,6 +107,15 @@ export default function StudentDashboard() {
         {active === "news" && <NewsView />}
       </DashboardLayout>
       <AIChatWidget />
+
+      {/* Force avatar upload if student has no profile picture */}
+      {!authLoading && profile && !profile.avatar_url && (
+        <AvatarUploadModal
+          session={session}
+          refreshProfile={refreshProfile}
+          signOut={signOut}
+        />
+      )}
     </>
   );
 }
@@ -581,6 +590,142 @@ function NewsView() {
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+/* ─── Avatar Upload Modal ─── */
+function AvatarUploadModal({ session, refreshProfile, signOut }: any) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError("");
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    if (!selected.type.startsWith("image/")) {
+      setError("Please upload an image file (PNG, JPG, WEBP).");
+      return;
+    }
+
+    if (selected.size > 5 * 1024 * 1024) {
+      setError("Image size must be less than 5MB.");
+      return;
+    }
+
+    setFile(selected);
+    setPreview(URL.createObjectURL(selected));
+  };
+
+  const onUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("avatar", file);
+
+      const token = session?.access_token;
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+      const res = await fetch(`${backendUrl}/api/users/avatar`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to upload picture.");
+      }
+
+      await refreshProfile();
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "An error occurred during upload.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+      <div className="relative w-full max-w-md bg-white rounded-3xl border border-gray-100 p-6 sm:p-8 shadow-2xl overflow-hidden flex flex-col items-center">
+        {/* Decorative Grid Background */}
+        <div className="absolute inset-0 opacity-[0.02] pointer-events-none">
+          <GridBackground size={24} />
+        </div>
+
+        <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center mb-5 relative">
+          <Camera className="text-green-600" size={22} />
+        </div>
+
+        <h2 className="text-xl font-medium text-center mb-2">Upload Profile Picture</h2>
+        <p className="text-sm text-gray-500 text-center mb-6 leading-relaxed">
+          To finalize your account setup, please upload a clear, high-quality portrait of yourself. This is required for course rosters and exams.
+        </p>
+
+        {error && (
+          <div className="w-full flex items-start gap-2 bg-red-50 text-red-600 text-xs rounded-xl px-4 py-3 mb-5">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Upload Dropzone */}
+        <div className="w-full aspect-square max-w-[200px] border-2 border-dashed border-gray-200 rounded-3xl overflow-hidden relative group flex flex-col items-center justify-center bg-gray-50 hover:bg-gray-100/50 hover:border-green-400 transition cursor-pointer mb-6">
+          {preview ? (
+            <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+          ) : (
+            <div className="flex flex-col items-center p-4">
+              <User size={36} className="text-gray-300 group-hover:text-green-400 transition mb-2" strokeWidth={1.5} />
+              <span className="text-xs text-gray-400 group-hover:text-gray-500 transition text-center font-medium">Select photo</span>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            onChange={onFileChange}
+            disabled={uploading}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+          />
+        </div>
+
+        <div className="w-full space-y-3">
+          <button
+            onClick={onUpload}
+            disabled={!file || uploading}
+            className="w-full bg-[#0a0a0a] text-white rounded-full py-3 text-sm font-medium hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {uploading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload size={14} />
+                Set profile picture
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={() => signOut()}
+            disabled={uploading}
+            className="w-full flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-red-500 transition py-2 font-medium"
+          >
+            <LogOut size={14} />
+            Sign out of portal
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

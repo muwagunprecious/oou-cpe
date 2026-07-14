@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   LayoutGrid, Users, BookOpen, MapPin, Megaphone, BarChart3,
-  Loader2, CheckCircle2, XCircle, Plus, Trash2
+  Loader2, CheckCircle2, XCircle, Plus, Trash2, X, Eye
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
@@ -102,6 +102,7 @@ function UsersManager() {
   const [filter, setFilter] = useState<"all" | "pending_approval" | "student" | "lecturer">("all");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -163,8 +164,12 @@ function UsersManager() {
             <div key={u.id} className="rounded-2xl border border-gray-100 p-4">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600">
-                    {u.full_name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                  <div className="h-10 w-10 rounded-xl bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600 overflow-hidden shrink-0">
+                    {u.avatar_url ? (
+                      <img src={u.avatar_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      u.full_name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"
+                    )}
                   </div>
                   <div>
                     <p className="text-sm font-medium">{u.full_name}</p>
@@ -216,6 +221,13 @@ function UsersManager() {
                       {u.status === "banned" ? "Unban" : "Ban"}
                     </button>
                   )}
+                  <button
+                    onClick={() => setSelectedUser(u)}
+                    className="flex items-center gap-1 bg-gray-50 border border-gray-200 text-gray-700 hover:bg-gray-100 rounded-xl px-3 py-1.5 text-xs font-medium transition"
+                  >
+                    <Eye size={12} />
+                    Details
+                  </button>
                 </div>
               </div>
             </div>
@@ -225,6 +237,122 @@ function UsersManager() {
           )}
         </div>
       )}
+
+      {selectedUser && (
+        <UserDetailModal user={selectedUser} onClose={() => setSelectedUser(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ─── User Detail Modal Component ─── */
+function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="relative w-full max-w-lg bg-white rounded-3xl border border-gray-100 shadow-2xl overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="text-lg font-medium">User Profile Details</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+          {/* Avatar and Primary Identity */}
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:items-start text-center sm:text-left pb-6 border-b border-gray-100">
+            <div className="h-20 w-20 rounded-2xl bg-gray-100 flex items-center justify-center text-xl font-bold text-gray-600 overflow-hidden shrink-0 border border-gray-200">
+              {user.avatar_url ? (
+                <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                user.full_name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"
+              )}
+            </div>
+            <div>
+              <h4 className="text-xl font-medium">{user.full_name || "—"}</h4>
+              <p className="text-sm text-gray-500 mt-0.5">{user.email}</p>
+              <div className="flex flex-wrap items-center gap-2 mt-3 justify-center sm:justify-start">
+                <span className="text-xs px-2.5 py-1 rounded-full font-medium capitalize bg-gray-100 text-gray-700">
+                  {user.role}
+                </span>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium capitalize ${
+                  user.status === "active" ? "bg-green-50 text-green-700"
+                  : user.status === "banned" ? "bg-red-50 text-red-600"
+                  : "bg-amber-50 text-amber-700"
+                }`}>
+                  {user.status?.replace("_", " ") || "—"}
+                </span>
+                {user.level && (
+                  <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-green-50 text-green-700">
+                    {user.level} Level
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Details Grid */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+              <p className="text-xs text-gray-400 font-medium mb-1">Department</p>
+              <p className="text-sm font-medium">{user.department || "Computer Engineering"}</p>
+            </div>
+            <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+              <p className="text-xs text-gray-400 font-medium mb-1">Phone Number</p>
+              <p className="text-sm font-medium">{user.phone || "—"}</p>
+            </div>
+
+            {user.role === "student" ? (
+              <>
+                <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+                  <p className="text-xs text-gray-400 font-medium mb-1">Matric Number</p>
+                  <p className="text-sm font-medium">{user.matric_number || "—"}</p>
+                </div>
+                <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+                  <p className="text-xs text-gray-400 font-medium mb-1">Academic Adviser</p>
+                  <p className="text-sm font-medium">{user.academic_adviser || "—"}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+                  <p className="text-xs text-gray-400 font-medium mb-1">Staff ID</p>
+                  <p className="text-sm font-medium">{user.staff_id || "—"}</p>
+                </div>
+                <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2 sm:col-span-1">
+                  <p className="text-xs text-gray-400 font-medium mb-1">Office Location</p>
+                  <p className="text-sm font-medium">{user.office || "—"}</p>
+                </div>
+              </>
+            )}
+
+            <div className="bg-gray-50/50 rounded-2xl p-4 border border-gray-100/50 col-span-2">
+              <p className="text-xs text-gray-400 font-medium mb-1">Date Joined</p>
+              <p className="text-sm font-medium">
+                {user.created_at ? new Date(user.created_at).toLocaleDateString("en-US", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit"
+                }) : "—"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end px-6 py-4 border-t border-gray-100 bg-gray-50/50">
+          <button
+            onClick={onClose}
+            className="bg-[#0a0a0a] text-white hover:bg-gray-800 rounded-full px-5 py-2.5 text-sm font-medium transition"
+          >
+            Close Profile
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

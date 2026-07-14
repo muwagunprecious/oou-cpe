@@ -2,6 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import ws from "ws";
 
+// Assign WebSocket globally for Node 20 environments
+globalThis.WebSocket = ws as any;
+
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -16,19 +19,13 @@ if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false
-  },
-  realtime: {
-    transport: ws as any
   }
 });
 
-// Client for administrative bypass operations (e.g. checking/approving profiles, checking auth tables)
+// Client for administrative bypass operations (e.g. checking/approving profiles)
 export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false
-  },
-  realtime: {
-    transport: ws as any
   }
 });
