@@ -359,43 +359,62 @@ function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) 
 
 /* ─── Courses Manager ─── */
 function CoursesManager() {
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
   const [courses, setCourses] = useState<any[]>([]);
   const [lecturers, setLecturers] = useState<any[]>([]);
-  const [form, setForm] = useState({ code: "", title: "", level: "100", semester: "1", lecturerId: "" });
+  const [locations, setLocations] = useState<any[]>([]);
+  const [form, setForm] = useState({ code: "", title: "", level: "100", semester: "1", lecturerId: "", credit_units: "3" });
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expandedCourse, setExpandedCourse] = useState<string | null>(null);
+  const [timetableForm, setTimetableForm] = useState({ day: "Monday", start_time: "08:00", end_time: "10:00", location_id: "", latitude: "", longitude: "", attendance_radius: "10" });
+  const [savingSlot, setSavingSlot] = useState(false);
+  const [assigningLecturer, setAssigningLecturer] = useState<{ [key: string]: string }>({});
 
-  useEffect(() => {
-    const load = async () => {
-      const [{ data: c }, { data: l }] = await Promise.all([
-        supabase.from("courses").select("*, users(full_name)").order("code"),
-        supabase.from("users").select("id, full_name").eq("role", "lecturer").eq("status", "active"),
-      ]);
-      setCourses(c || []);
-      setLecturers(l || []);
-      setLoading(false);
-    };
-    load();
-  }, []);
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || "";
+  };
+
+  const load = async () => {
+    const [{ data: c }, { data: l }, { data: loc }] = await Promise.all([
+      supabase.from("courses").select("*, lecturer:users!lecturer_id(id, full_name), classes(id, day, start_time, end_time, venue, latitude, longitude, attendance_radius, location:locations(name))").order("level").order("code"),
+      supabase.from("users").select("id, full_name").eq("role", "lecturer").eq("status", "active"),
+      supabase.from("locations").select("id, name, building, latitude, longitude").order("name"),
+    ]);
+    setCourses(c || []);
+    setLecturers(l || []);
+    setLocations(loc || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.code || !form.title) return;
     setSaving(true);
-    const { data } = await supabase
-      .from("courses")
-      .insert({
-        code: form.code.toUpperCase(),
-        title: form.title,
-        level: form.level,
-        semester: parseInt(form.semester),
-        lecturer_id: form.lecturerId || null,
-      })
-      .select("*, users(full_name)")
-      .single();
-    if (data) setCourses([data, ...courses]);
-    setForm({ code: "", title: "", level: "100", semester: "1", lecturerId: "" });
+    const token = await getToken();
+    const res = await fetch(`${BACKEND}/api/courses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ code: form.code.toUpperCase(), title: form.title, level: form.level, semester: parseInt(form.semester), lecturer_id: form.lecturerId || null, credit_units: parseInt(form.credit_units) }),
+    });
+    if (res.ok) {
+      setForm({ code: "", title: "", level: "100", semester: "1", lecturerId: "", credit_units: "3" });
+      await load();
+    }
     setSaving(false);
+  };
+
+  const assignLecturer = async (courseId: string, lecturerId: string) => {
+    const token = await getToken();
+    await fetch(`${BACKEND}/api/courses/${courseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ lecturer_id: lecturerId || null }),
+    });
+    await load();
   };
 
   const deleteCourse = async (id: string) => {
@@ -403,111 +422,185 @@ function CoursesManager() {
     setCourses((prev) => prev.filter((c) => c.id !== id));
   };
 
+  const addTimetableSlot = async (courseId: string) => {
+    setSavingSlot(true);
+    const token = await getToken();
+    const loc = locations.find(l => l.id === timetableForm.location_id);
+    await fetch(`${BACKEND}/api/courses/${courseId}/timetable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        day: timetableForm.day,
+        start_time: timetableForm.start_time,
+        end_time: timetableForm.end_time,
+        location_id: timetableForm.location_id || null,
+        latitude: timetableForm.latitude ? parseFloat(timetableForm.latitude) : (loc?.latitude ?? null),
+        longitude: timetableForm.longitude ? parseFloat(timetableForm.longitude) : (loc?.longitude ?? null),
+        attendance_radius: parseFloat(timetableForm.attendance_radius) || 10,
+      }),
+    });
+    await load();
+    setSavingSlot(false);
+  };
+
+  const deleteSlot = async (courseId: string, slotId: string) => {
+    const token = await getToken();
+    await fetch(`${BACKEND}/api/courses/${courseId}/timetable/${slotId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  };
+
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
   return (
-    <div className="grid md:grid-cols-2 gap-6">
+    <div className="space-y-6">
+      {/* Add course form */}
       <form onSubmit={handleCreate} className="rounded-3xl border border-gray-100 p-6 sm:p-8 space-y-5">
         <div>
-          <h2 className="text-lg font-medium">Add course</h2>
-          <p className="text-sm text-gray-400">Register a new course in the department</p>
+          <h2 className="text-lg font-medium">Add Course</h2>
+          <p className="text-sm text-gray-400">Create and assign a new department course</p>
         </div>
-
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div>
-            <label className="text-sm font-medium block mb-2">Course code</label>
-            <input
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30 uppercase"
-              placeholder="CPE 301"
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-            />
+            <label className="text-sm font-medium block mb-2">Course Code</label>
+            <input className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30 uppercase" placeholder="CPE 301" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
           </div>
           <div>
             <label className="text-sm font-medium block mb-2">Level</label>
-            <select
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-              value={form.level}
-              onChange={(e) => setForm({ ...form, level: e.target.value })}
-            >
-              {["100", "200", "300", "400", "500"].map((l) => (
-                <option key={l} value={l}>{l} Level</option>
-              ))}
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.level} onChange={(e) => setForm({ ...form, level: e.target.value })}>
+              {["100","200","300","400","500"].map(l => <option key={l} value={l}>{l} Level</option>)}
             </select>
           </div>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium block mb-2">Title</label>
-          <input
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-            placeholder="e.g. Digital Electronics"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-2">Semester</label>
-            <select
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-              value={form.semester}
-              onChange={(e) => setForm({ ...form, semester: e.target.value })}
-            >
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.semester} onChange={(e) => setForm({ ...form, semester: e.target.value })}>
               <option value="1">Semester 1</option>
               <option value="2">Semester 2</option>
             </select>
           </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-sm font-medium block mb-2">Lecturer (optional)</label>
-            <select
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-              value={form.lecturerId}
-              onChange={(e) => setForm({ ...form, lecturerId: e.target.value })}
-            >
+            <label className="text-sm font-medium block mb-2">Title</label>
+            <input className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" placeholder="e.g. Digital Electronics" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">Assign Lecturer</label>
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.lecturerId} onChange={(e) => setForm({ ...form, lecturerId: e.target.value })}>
               <option value="">Unassigned</option>
-              {lecturers.map((l) => <option key={l.id} value={l.id}>{l.full_name}</option>)}
+              {lecturers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
             </select>
           </div>
         </div>
-
-        <button
-          type="submit"
-          disabled={saving || !form.code || !form.title}
-          className="flex items-center gap-2 bg-[#0a0a0a] text-white rounded-full px-6 py-3 text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50"
-        >
+        <button type="submit" disabled={saving || !form.code || !form.title} className="flex items-center gap-2 bg-[#0a0a0a] text-white rounded-full px-6 py-3 text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
           {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          {saving ? "Adding..." : "Add course"}
+          {saving ? "Adding..." : "Add Course"}
         </button>
       </form>
 
+      {/* Course list */}
       <div className="rounded-3xl border border-gray-100 p-6 sm:p-8">
-        <h2 className="text-lg font-medium">Registered courses</h2>
-        <p className="text-sm text-gray-400 mb-6">{courses.length} courses total</p>
+        <h2 className="text-lg font-medium mb-1">Registered Courses</h2>
+        <p className="text-sm text-gray-400 mb-5">{courses.length} total · Click a course to manage timetable</p>
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <Loader2 size={14} className="animate-spin" /> Loading...
-          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 size={14} className="animate-spin" /> Loading...</div>
         ) : (
-          <ul className="space-y-3 max-h-[400px] overflow-y-auto">
+          <div className="space-y-3">
             {courses.map((c: any) => (
-              <li key={c.id} className="flex items-center justify-between border border-gray-100 rounded-2xl p-3">
-                <div>
-                  <div className="flex items-center gap-2">
+              <div key={c.id} className="border border-gray-100 rounded-2xl overflow-hidden">
+                {/* Course row */}
+                <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition" onClick={() => setExpandedCourse(expandedCourse === c.id ? null : c.id)}>
+                  <div className="flex items-center gap-3">
                     <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5">{c.code}</span>
                     <span className="text-xs text-gray-400">{c.level} Level · Sem {c.semester}</span>
                   </div>
-                  <p className="text-sm mt-0.5">{c.title}</p>
-                  <p className="text-xs text-gray-400">{c.users?.full_name || "No lecturer assigned"}</p>
+                  <div className="flex items-center gap-2 ml-4 flex-1">
+                    <p className="text-sm font-medium truncate">{c.title}</p>
+                  </div>
+                  <div className="flex items-center gap-3 ml-4">
+                    {/* Reassign lecturer inline */}
+                    <select
+                      className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none"
+                      value={assigningLecturer[c.id] ?? (c.lecturer?.id || "")}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => { setAssigningLecturer({ ...assigningLecturer, [c.id]: e.target.value }); assignLecturer(c.id, e.target.value); }}
+                    >
+                      <option value="">Unassigned</option>
+                      {lecturers.map(l => <option key={l.id} value={l.id}>{l.full_name}</option>)}
+                    </select>
+                    <span className="text-xs text-gray-400 hidden sm:block">{(c.classes || []).length} slots</span>
+                    <button onClick={(e) => { e.stopPropagation(); deleteCourse(c.id); }} className="text-gray-300 hover:text-red-500 transition p-1"><Trash2 size={14} /></button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => deleteCourse(c.id)}
-                  className="text-gray-300 hover:text-red-500 transition p-1"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </li>
+
+                {/* Expanded timetable section */}
+                {expandedCourse === c.id && (
+                  <div className="border-t border-gray-100 bg-gray-50/50 p-4 space-y-4">
+                    {/* Existing slots */}
+                    {(c.classes || []).length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Timetable Slots</p>
+                        {c.classes.map((slot: any) => (
+                          <div key={slot.id} className="flex items-center justify-between bg-white rounded-xl border border-gray-100 px-4 py-2.5 text-sm">
+                            <div className="flex items-center gap-3">
+                              <span className="font-medium text-[#0a0a0a]">{slot.day}</span>
+                              <span className="text-gray-500">{slot.start_time} – {slot.end_time}</span>
+                              <span className="text-gray-400 text-xs">{slot.location?.name || slot.venue || "No venue"}</span>
+                              {slot.latitude && <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">GPS ✓ {slot.attendance_radius}m</span>}
+                            </div>
+                            <button onClick={() => deleteSlot(c.id, slot.id)} className="text-gray-300 hover:text-red-500 transition p-1"><Trash2 size={13} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* Add slot form */}
+                    <div className="space-y-3">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Add Timetable Slot</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Day</label>
+                          <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" value={timetableForm.day} onChange={e => setTimetableForm({ ...timetableForm, day: e.target.value })}>
+                            {DAYS.map(d => <option key={d}>{d}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Start Time</label>
+                          <input type="time" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" value={timetableForm.start_time} onChange={e => setTimetableForm({ ...timetableForm, start_time: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">End Time</label>
+                          <input type="time" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" value={timetableForm.end_time} onChange={e => setTimetableForm({ ...timetableForm, end_time: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">Location</label>
+                          <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" value={timetableForm.location_id} onChange={e => { const loc = locations.find(l => l.id === e.target.value); setTimetableForm({ ...timetableForm, location_id: e.target.value, latitude: loc?.latitude?.toString() || "", longitude: loc?.longitude?.toString() || "" }); }}>
+                            <option value="">Custom / Manual GPS</option>
+                            {locations.map(l => <option key={l.id} value={l.id}>{l.name} — {l.building}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">GPS Latitude</label>
+                          <input type="number" step="any" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" placeholder="6.9038" value={timetableForm.latitude} onChange={e => setTimetableForm({ ...timetableForm, latitude: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-500 mb-1 block">GPS Longitude</label>
+                          <input type="number" step="any" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" placeholder="3.9298" value={timetableForm.longitude} onChange={e => setTimetableForm({ ...timetableForm, longitude: e.target.value })} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-36">
+                          <label className="text-xs text-gray-500 mb-1 block">Radius (metres)</label>
+                          <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" value={timetableForm.attendance_radius} onChange={e => setTimetableForm({ ...timetableForm, attendance_radius: e.target.value })} />
+                        </div>
+                        <button onClick={() => addTimetableSlot(c.id)} disabled={savingSlot} className="mt-5 flex items-center gap-2 bg-[#0a0a0a] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                          {savingSlot ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Add Slot
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </div>

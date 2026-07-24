@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   LayoutGrid, Calendar, Users, ClipboardList, Megaphone,
-  Loader2, CheckCircle2, XCircle, Clock, Plus, Radio
+  Loader2, CheckCircle2, XCircle, Clock, Plus, Radio, MapPin, Trash2
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -105,231 +105,580 @@ function LecturerOverview({ profile }: any) {
 
 /* ─── My Classes ─── */
 function MyClasses({ profile }: any) {
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
   const [courses, setCourses] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  const todayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+
+  const [form, setForm] = useState({
+    courseId: "",
+    day: todayName,
+    startTime: "08:00",
+    endTime: "10:00",
+    locationId: "",
+    venue: "",
+    latitude: "",
+    longitude: "",
+    attendanceRadius: "10"
+  });
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || "";
+  };
+
+  const loadCourses = async () => {
+    if (!profile?.id) return;
+    const { data } = await supabase
+      .from("courses")
+      .select("*, classes(*, locations(name, building))")
+      .eq("lecturer_id", profile.id);
+    setCourses(data || []);
+  };
+
+  const loadLocations = async () => {
+    const { data } = await supabase
+      .from("locations")
+      .select("*")
+      .order("name");
+    setLocations(data || []);
+  };
 
   useEffect(() => {
     if (!profile?.id) return;
-    const load = async () => {
-      const { data } = await supabase
-        .from("courses")
-        .select("*, classes(*, locations(name, building))")
-        .eq("lecturer_id", profile.id);
-      setCourses(data || []);
+    const init = async () => {
+      await Promise.all([loadCourses(), loadLocations()]);
       setLoading(false);
     };
-    load();
+    init();
   }, [profile?.id]);
+
+  const handleAddSlot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.courseId) return;
+    setSaving(true);
+
+    try {
+      const token = await getToken();
+      const loc = locations.find(l => l.id === form.locationId);
+
+      const res = await fetch(`${BACKEND}/api/courses/${form.courseId}/timetable`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          day: form.day,
+          start_time: form.startTime,
+          end_time: form.endTime,
+          location_id: form.locationId || null,
+          venue: form.venue || null,
+          latitude: form.latitude ? parseFloat(form.latitude) : (loc?.latitude || null),
+          longitude: form.longitude ? parseFloat(form.longitude) : (loc?.longitude || null),
+          attendance_radius: form.attendanceRadius ? parseFloat(form.attendanceRadius) : 10
+        })
+      });
+
+      if (res.ok) {
+        await loadCourses();
+        setShowAddForm(false);
+        setForm({
+          courseId: "",
+          day: todayName,
+          startTime: "08:00",
+          endTime: "10:00",
+          locationId: "",
+          venue: "",
+          latitude: "",
+          longitude: "",
+          attendanceRadius: "10"
+        });
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to schedule class");
+      }
+    } catch (err: any) {
+      alert("Network error: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveSlot = async (courseId: string, slotId: string) => {
+    if (!confirm("Are you sure you want to remove this class slot? This will cancel any scheduled sessions for it.")) return;
+
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BACKEND}/api/courses/${courseId}/timetable/${slotId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        await loadCourses();
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to delete slot");
+      }
+    } catch (err: any) {
+      alert("Network error: " + err.message);
+    }
+  };
 
   if (loading) return (
     <div className="flex items-center gap-2 text-sm text-gray-400 py-10">
-      <Loader2 size={16} className="animate-spin" /> Loading courses...
+      <Loader2 size={16} className="animate-spin" /> Loading classes...
     </div>
   );
 
   return (
-    <div className="space-y-4">
-      {courses.length === 0 ? (
-        <div className="rounded-3xl border border-gray-100 p-16 flex flex-col items-center text-center">
-          <Calendar size={32} className="text-gray-200 mb-4" strokeWidth={1.5} />
-          <p className="text-gray-400">No courses assigned yet. Contact the administrator.</p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-medium">My Courses & Timetable</h2>
+          <p className="text-sm text-gray-400">Manage scheduled lectures and room locations</p>
         </div>
-      ) : (
-        courses.map((course: any) => (
-          <div key={course.id} className="rounded-3xl border border-gray-100 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <span className="text-xs font-medium text-green-700 bg-green-50 rounded-full px-2.5 py-1">{course.code}</span>
-                <h3 className="font-medium mt-2">{course.title}</h3>
-                <p className="text-sm text-gray-400">{course.level} Level · Semester {course.semester}</p>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center gap-2 bg-[#0a0a0a] text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-gray-800 transition"
+        >
+          <Plus size={16} /> {showAddForm ? "Hide Form" : "Schedule Class Today"}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <form onSubmit={handleAddSlot} className="rounded-3xl border border-gray-100 p-6 space-y-4 bg-gray-50/50">
+          <h3 className="font-medium text-sm">Schedule a Class Slot</h3>
+          
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Course</label>
+              <select
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.courseId}
+                onChange={e => setForm({ ...form, courseId: e.target.value })}
+                required
+              >
+                <option value="">Select a course</option>
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>{c.code} · {c.title}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Day</label>
+              <select
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.day}
+                onChange={e => setForm({ ...form, day: e.target.value })}
+                required
+              >
+                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map(d => (
+                  <option key={d} value={d}>{d} {d === todayName ? "(Today)" : ""}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Predefined Location</label>
+              <select
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.locationId}
+                onChange={e => {
+                  const loc = locations.find(l => l.id === e.target.value);
+                  setForm({
+                    ...form,
+                    locationId: e.target.value,
+                    latitude: loc?.latitude?.toString() || "",
+                    longitude: loc?.longitude?.toString() || ""
+                  });
+                }}
+              >
+                <option value="">Custom Venue Override</option>
+                {locations.map(l => (
+                  <option key={l.id} value={l.id}>{l.name} — {l.building}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Start Time</label>
+              <input
+                type="time"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.startTime}
+                onChange={e => setForm({ ...form, startTime: e.target.value })}
+                required
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">End Time</label>
+              <input
+                type="time"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.endTime}
+                onChange={e => setForm({ ...form, endTime: e.target.value })}
+                required
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Custom Venue Name (Optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. ETF Hall"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.venue}
+                onChange={e => setForm({ ...form, venue: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">GPS Latitude (Optional)</label>
+              <input
+                type="number"
+                step="any"
+                placeholder="6.9038"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.latitude}
+                onChange={e => setForm({ ...form, latitude: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">GPS Longitude (Optional)</label>
+              <input
+                type="number"
+                step="any"
+                placeholder="3.9298"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.longitude}
+                onChange={e => setForm({ ...form, longitude: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Attendance Radius (m)</label>
+              <input
+                type="number"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white"
+                value={form.attendanceRadius}
+                onChange={e => setForm({ ...form, attendanceRadius: e.target.value })}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowAddForm(false)}
+              className="border border-gray-200 text-gray-600 rounded-full px-5 py-2.5 text-sm font-medium hover:bg-gray-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="bg-green-500 text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-green-600 transition disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Add Class Slot"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div className="space-y-4">
+        {courses.length === 0 ? (
+          <div className="rounded-3xl border border-gray-100 p-16 flex flex-col items-center text-center">
+            <Calendar size={32} className="text-gray-200 mb-4" strokeWidth={1.5} />
+            <p className="text-gray-400">No courses assigned yet. Contact the administrator.</p>
+          </div>
+        ) : (
+          courses.map((course: any) => (
+            <div key={course.id} className="rounded-3xl border border-gray-100 p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-50">
+                <div>
+                  <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2.5 py-1">{course.code}</span>
+                  <h3 className="font-medium mt-2">{course.title}</h3>
+                  <p className="text-xs text-gray-400">{course.level} Level · Semester {course.semester} · {course.credit_units} Units</p>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Scheduled Classes</h4>
+                {course.classes && course.classes.length > 0 ? (
+                  <div className="space-y-2">
+                    {course.classes.map((cls: any) => (
+                      <div key={cls.id} className="flex items-center justify-between text-sm bg-gray-50/50 rounded-2xl px-4 py-3 border border-gray-50">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-medium ${cls.day === todayName ? "text-green-600" : "text-gray-700"}`}>
+                              {cls.day} {cls.day === todayName ? "(Today)" : ""}
+                            </span>
+                            <span className="text-gray-400">·</span>
+                            <span className="text-gray-600">{cls.start_time} – {cls.end_time}</span>
+                          </div>
+                          {cls.locations?.name && (
+                            <p className="text-xs text-gray-400 flex items-center gap-1">
+                              <MapPin size={12} /> {cls.locations.name} {cls.venue ? `(${cls.venue})` : ""}
+                            </p>
+                          )}
+                          {!cls.locations?.name && cls.venue && (
+                            <p className="text-xs text-gray-400 flex items-center gap-1">
+                              <MapPin size={12} /> {cls.venue}
+                            </p>
+                          )}
+                        </div>
+                        
+                        <button
+                          onClick={() => handleRemoveSlot(course.id, cls.id)}
+                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition"
+                          title="Remove scheduled class"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic">No classes scheduled for this course yet.</p>
+                )}
               </div>
             </div>
-            {course.classes?.length > 0 && (
-              <div className="border-t border-gray-50 pt-4 space-y-2">
-                {course.classes.map((cls: any) => (
-                  <div key={cls.id} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">{cls.day} · {cls.start_time}–{cls.end_time}</span>
-                    <span className="text-gray-400">{cls.locations?.name || "Location TBD"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }
 
 /* ─── Attendance Sessions ─── */
 function AttendanceSessions({ profile }: any) {
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [classes, setClasses] = useState<any[]>([]);
-  const [form, setForm] = useState({ classId: "", duration: "60", radius: "75" });
-  const [creating, setCreating] = useState(false);
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+  const [myCourses, setMyCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activating, setActivating] = useState<string | null>(null);
+  const [activeSessionMap, setActiveSessionMap] = useState<{ [classId: string]: any }>({});
+  const [liveData, setLiveData] = useState<{ [sessionId: string]: any }>({});
+  const [manualMarking, setManualMarking] = useState<{ [key: string]: boolean }>({});
+  const [duration, setDuration] = useState("60");
 
-  useEffect(() => {
-    if (!profile?.id) return;
-    const load = async () => {
-      const { data: courses } = await supabase
-        .from("courses")
-        .select("id, code, title, classes(*, locations(name, latitude, longitude))")
-        .eq("lecturer_id", profile.id);
+  const todayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
 
-      const allClasses: any[] = [];
-      courses?.forEach((c: any) => {
-        c.classes?.forEach((cls: any) => allClasses.push({ ...cls, courseCode: c.code, courseTitle: c.title }));
-      });
-      setClasses(allClasses);
-
-      const classIds = allClasses.map((c) => c.id);
-      if (classIds.length > 0) {
-        const { data: sess } = await supabase
-          .from("attendance_sessions")
-          .select("*, classes(*, courses(code))")
-          .in("class_id", classIds)
-          .order("opens_at", { ascending: false })
-          .limit(10);
-        setSessions(sess || []);
-      }
-      setLoading(false);
-    };
-    load();
-  }, [profile?.id]);
-
-  const handleOpen = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.classId) return;
-    setCreating(true);
-
-    const selectedClass = classes.find((c) => c.id === form.classId);
-    const opens = new Date();
-    const closes = new Date(opens.getTime() + parseInt(form.duration) * 60 * 1000);
-
-    await supabase.from("attendance_sessions").insert({
-      class_id: form.classId,
-      opens_at: opens.toISOString(),
-      closes_at: closes.toISOString(),
-      radius: parseInt(form.radius),
-      latitude: selectedClass?.locations?.latitude,
-      longitude: selectedClass?.locations?.longitude,
-    });
-
-    setCreating(false);
-    setForm({ classId: "", duration: "60", radius: "75" });
-
-    // Reload
-    const classIds = classes.map((c) => c.id);
-    const { data: sess } = await supabase
-      .from("attendance_sessions")
-      .select("*, classes(*, courses(code))")
-      .in("class_id", classIds)
-      .order("opens_at", { ascending: false })
-      .limit(10);
-    setSessions(sess || []);
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || "";
   };
 
-  const now = new Date();
+  const loadCourses = async () => {
+    if (!profile?.id) return;
+    const { data } = await supabase
+      .from("courses")
+      .select("id, code, title, level, classes(id, day, start_time, end_time, attendance_radius, latitude, longitude, location:locations(name))")
+      .eq("lecturer_id", profile.id);
+    setMyCourses(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadCourses(); }, [profile?.id]);
+
+  // Compute today's classes across all courses
+  const todayClasses = myCourses.flatMap(c =>
+    (c.classes || []).filter((cl: any) => cl.day === todayName).map((cl: any) => ({ ...cl, course: c }))
+  );
+
+  // Check for currently active sessions
+  useEffect(() => {
+    const now = new Date();
+    const fetchSessions = async () => {
+      if (!todayClasses.length) return;
+      const classIds = todayClasses.map(c => c.id);
+      const { data } = await supabase
+        .from("attendance_sessions")
+        .select("*")
+        .in("class_id", classIds)
+        .gte("closes_at", now.toISOString());
+      const map: { [classId: string]: any } = {};
+      (data || []).forEach((s: any) => { map[s.class_id] = s; });
+      setActiveSessionMap(map);
+    };
+    fetchSessions();
+  }, [myCourses]);
+
+  const activateAttendance = async (cl: any) => {
+    setActivating(cl.id);
+    try {
+      const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000 }));
+      const token = await getToken();
+      const r = await fetch(`${BACKEND}/api/attendance/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ classId: cl.id, latitude: pos.coords.latitude, longitude: pos.coords.longitude, durationMinutes: parseInt(duration) }),
+      });
+      if (r.ok) {
+        const { session } = await r.json();
+        setActiveSessionMap(prev => ({ ...prev, [cl.id]: session }));
+      }
+    } catch (e: any) { alert("Could not get GPS location: " + e.message); }
+    setActivating(null);
+  };
+
+  const fetchLive = async (sessionId: string) => {
+    const token = await getToken();
+    const r = await fetch(`${BACKEND}/api/attendance/live/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.ok) { const data = await r.json(); setLiveData(prev => ({ ...prev, [sessionId]: data })); }
+  };
+
+  const manualMark = async (sessionId: string, studentId: string) => {
+    const key = `${sessionId}-${studentId}`;
+    setManualMarking(m => ({ ...m, [key]: true }));
+    const token = await getToken();
+    await fetch(`${BACKEND}/api/attendance/manual`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId, studentId, status: "present" }),
+    });
+    await fetchLive(sessionId);
+    setManualMarking(m => ({ ...m, [key]: false }));
+  };
+
+  if (loading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-10"><Loader2 size={16} className="animate-spin" /> Loading...</div>;
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      {/* Open session form */}
-      <form onSubmit={handleOpen} className="rounded-3xl border border-gray-100 p-6 sm:p-8 space-y-5">
+    <div className="space-y-5">
+      <div className="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-4 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-medium">Open attendance window</h2>
-          <p className="text-sm text-gray-400">Students will mark attendance via GPS within the set radius</p>
+          <p className="text-sm font-medium">Today is <strong>{todayName}</strong></p>
+          <p className="text-xs text-gray-400 mt-0.5">Only your classes scheduled for today are shown below</p>
         </div>
-
-        <div>
-          <label className="text-sm font-medium block mb-2">Class</label>
-          <select
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-            value={form.classId}
-            onChange={(e) => setForm({ ...form, classId: e.target.value })}
-          >
-            <option value="">Select a class</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>{c.courseCode} · {c.day} {c.start_time}</option>
-            ))}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Duration:</label>
+          <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={duration} onChange={e => setDuration(e.target.value)}>
+            {["15","30","45","60","90","120"].map(d => <option key={d} value={d}>{d} min</option>)}
           </select>
         </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-sm font-medium block mb-2">Duration (mins)</label>
-            <select
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-              value={form.duration}
-              onChange={(e) => setForm({ ...form, duration: e.target.value })}
-            >
-              {["15", "30", "45", "60", "90", "120"].map((d) => (
-                <option key={d} value={d}>{d} min</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-2">GPS Radius (m)</label>
-            <select
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30"
-              value={form.radius}
-              onChange={(e) => setForm({ ...form, radius: e.target.value })}
-            >
-              <option value="50">50 m (tight)</option>
-              <option value="75">75 m (default)</option>
-              <option value="100">100 m</option>
-              <option value="150">150 m (large hall)</option>
-            </select>
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          disabled={creating || !form.classId}
-          className="flex items-center gap-2 bg-green-500 text-white rounded-full px-6 py-3 text-sm font-medium hover:bg-green-600 transition disabled:opacity-50"
-        >
-          {creating ? <Loader2 size={14} className="animate-spin" /> : <Radio size={14} />}
-          {creating ? "Opening..." : "Open attendance"}
-        </button>
-      </form>
-
-      {/* Recent sessions */}
-      <div className="rounded-3xl border border-gray-100 p-6 sm:p-8">
-        <h2 className="text-lg font-medium">Recent sessions</h2>
-        <p className="text-sm text-gray-400 mb-6">Last 10 attendance windows</p>
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <Loader2 size={14} className="animate-spin" /> Loading...
-          </div>
-        ) : sessions.length === 0 ? (
-          <p className="text-sm text-gray-400">No sessions opened yet.</p>
-        ) : (
-          <ul className="space-y-3">
-            {sessions.map((s: any) => {
-              const active = new Date(s.opens_at) <= now && new Date(s.closes_at) >= now;
-              return (
-                <li key={s.id} className="border border-gray-100 rounded-2xl p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">{s.classes?.courses?.code}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${active ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                      {active ? "🟢 Live" : "Closed"}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    {new Date(s.opens_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    {" → "}
-                    {new Date(s.closes_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    {" · "}{s.radius}m radius
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </div>
+
+      {todayClasses.length === 0 ? (
+        <div className="rounded-3xl border border-gray-100 p-10 flex flex-col items-center text-center">
+          <Radio size={32} className="text-gray-200 mb-4" strokeWidth={1.5} />
+          <p className="text-gray-400">No classes scheduled for today</p>
+          <p className="text-sm text-gray-400 mt-1">Check the timetable set by admin for your courses.</p>
+        </div>
+      ) : (
+        todayClasses.map(cl => {
+          const session = activeSessionMap[cl.id];
+          const live = session ? liveData[session.id] : null;
+          const now = new Date();
+          const isLive = session && new Date(session.opens_at) <= now && now <= new Date(session.closes_at);
+
+          return (
+            <div key={cl.id} className={`rounded-3xl border overflow-hidden ${isLive ? "border-green-200" : "border-gray-100"}`}>
+              <div className={`flex items-center justify-between px-5 py-4 ${isLive ? "bg-green-50/40" : "bg-gray-50/50"}`}>
+                <div>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5">{cl.course?.code}</span>
+                    <span className="text-xs text-gray-400">{cl.course?.level} Level</span>
+                    <span className="text-xs text-gray-400">{cl.start_time}–{cl.end_time}</span>
+                    {cl.location?.name && <span className="text-xs text-gray-400">· {cl.location.name}</span>}
+                  </div>
+                  <p className="text-sm font-medium">{cl.course?.title}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">GPS radius: {cl.attendance_radius || 10}m</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isLive ? (
+                    <>
+                      <span className="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">🟢 Live</span>
+                      <button onClick={() => fetchLive(session.id)} className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition">Refresh Roll</button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => activateAttendance(cl)}
+                      disabled={activating === cl.id}
+                      className="flex items-center gap-1.5 bg-green-500 text-white rounded-xl px-4 py-2 text-xs font-medium hover:bg-green-600 transition disabled:opacity-50"
+                    >
+                      {activating === cl.id ? <Loader2 size={12} className="animate-spin" /> : <Radio size={12} />}
+                      {activating === cl.id ? "Starting..." : "Activate Attendance"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Live roll-call */}
+              {isLive && live && (
+                <div className="px-5 pb-5 pt-3 space-y-4">
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="text-green-700 font-medium">✅ Present: {live.presentCount}</span>
+                    <span className="text-red-500 font-medium">❌ Absent: {live.absentCount}</span>
+                  </div>
+
+                  {/* Present students */}
+                  {live.present?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Present</p>
+                      <div className="space-y-1.5">
+                        {live.present.map((r: any) => (
+                          <div key={r.id} className="flex items-center gap-2 text-sm bg-green-50/50 rounded-xl px-3 py-2">
+                            <div className="h-7 w-7 rounded-full bg-green-100 overflow-hidden shrink-0">
+                              {r.users?.avatar_url ? <img src={r.users.avatar_url} className="w-full h-full object-cover" /> : <span className="w-full h-full flex items-center justify-center text-[10px] font-bold text-green-700">{r.users?.full_name?.charAt(0)}</span>}
+                            </div>
+                            <span className="flex-1">{r.users?.full_name} <span className="text-gray-400 text-xs">· {r.users?.matric_number}</span></span>
+                            {r.manually_added && <span className="text-xs text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded">Manual</span>}
+                            <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Absent students — with manual mark button */}
+                  {live.absent?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Absent — Mark Manually if Complaint</p>
+                      <div className="space-y-1.5">
+                        {live.absent.map((u: any) => {
+                          const key = `${session.id}-${u.id}`;
+                          return (
+                            <div key={u.id} className="flex items-center gap-2 text-sm bg-red-50/30 rounded-xl px-3 py-2">
+                              <div className="h-7 w-7 rounded-full bg-gray-100 overflow-hidden shrink-0">
+                                {u.avatar_url ? <img src={u.avatar_url} className="w-full h-full object-cover" /> : <span className="w-full h-full flex items-center justify-center text-[10px] font-bold text-gray-500">{u.full_name?.charAt(0)}</span>}
+                              </div>
+                              <span className="flex-1">{u.full_name} <span className="text-gray-400 text-xs">· {u.matric_number}</span></span>
+                              <button
+                                onClick={() => manualMark(session.id, u.id)}
+                                disabled={manualMarking[key]}
+                                className="text-xs bg-[#0a0a0a] text-white rounded-lg px-2.5 py-1 hover:bg-gray-800 transition disabled:opacity-50"
+                              >
+                                {manualMarking[key] ? <Loader2 size={11} className="animate-spin inline" /> : "Mark Present"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {!live.present?.length && !live.absent?.length && (
+                    <p className="text-sm text-gray-400">No enrolled students yet.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
+
 
 /* ─── Assignments Manager ─── */
 function AssignmentsManager({ profile }: any) {

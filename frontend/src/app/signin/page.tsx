@@ -31,26 +31,31 @@ export default function SignInPage() {
       return;
     }
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("users")
       .select("role, status")
       .eq("id", data.user.id)
       .single();
 
+    console.log("SIGNIN DEBUG:", { profile, profileError, userId: data.user.id });
+
+    const userRole = profile?.role || data.user.user_metadata?.role || "student";
+    const userStatus = profile?.status || "active";
+
     setLoading(false);
 
-    if (profile?.status === "banned") {
+    if (userStatus === "banned") {
       await supabase.auth.signOut();
       setError("This account has been suspended. Contact the department administrator.");
       return;
     }
 
-    if (profile?.status === "pending_approval") {
+    if (userStatus === "pending_approval") {
       router.push("/pending-approval");
       return;
     }
 
-    router.push(roleHome(profile?.role));
+    router.push(roleHome(userRole));
   };
 
   return (

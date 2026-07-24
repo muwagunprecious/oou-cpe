@@ -45,7 +45,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select("*")
       .eq("id", userId)
       .single();
-    setProfile(data || null);
+    
+    if (data) {
+      setProfile(data);
+    } else {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setProfile({
+          id: user.id,
+          full_name: user.user_metadata?.full_name || "User",
+          email: user.email || "",
+          role: user.user_metadata?.role || "student",
+          status: "active",
+        });
+      } else {
+        setProfile(null);
+      }
+    }
   };
 
   useEffect(() => {

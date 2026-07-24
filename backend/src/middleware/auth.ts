@@ -52,18 +52,32 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
         matric_number: meta.matric_number || null,
       };
 
+      // Try insert first
       const { data: inserted, error: insertErr } = await supabaseAdmin
         .from("users")
-        .upsert(newProfile, { onConflict: "id" })
+        .insert(newProfile)
         .select("id, full_name, email, role, status, level")
         .single();
 
       if (insertErr || !inserted) {
-        console.error("Failed to auto-create user profile:", insertErr);
-        return res.status(403).json({ error: "User profile not found in department portal" });
-      }
+        console.error("Failed to auto-create user profile (insert):", insertErr);
 
-      profile = inserted;
+        // If insert failed (e.g. duplicate key), try upsert as fallback
+        const { data: upserted, error: upsertErr } = await supabaseAdmin
+          .from("users")
+          .upsert(newProfile, { onConflict: "id" })
+          .select("id, full_name, email, role, status, level")
+          .single();
+
+        if (upsertErr || !upserted) {
+          console.error("Failed to auto-create user profile (upsert):", upsertErr);
+          return res.status(403).json({ error: "User profile not found in department portal. Please contact support." });
+        }
+
+        profile = upserted;
+      } else {
+        profile = inserted;
+      }
     }
 
     if (profile.status === "banned") {
