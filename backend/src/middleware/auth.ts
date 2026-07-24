@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { supabase } from "../lib/supabase.js";
+import { supabase, supabaseAdmin } from "../lib/supabase.js";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -30,15 +30,40 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       return res.status(401).json({ error: "Invalid session token" });
     }
 
-    // Retrieve user details from public.users table
-    const { data: profile, error: dbError } = await supabase
+    // Retrieve user details from public.users table (use admin client to bypass RLS)
+    let { data: profile, error: dbError } = await supabaseAdmin
       .from("users")
       .select("id, full_name, email, role, status, level")
       .eq("id", user.id)
       .single();
 
+    // If profile is missing, auto-create it from auth metadata
     if (dbError || !profile) {
-      return res.status(403).json({ error: "User profile not found in department portal" });
+      const meta = user.user_metadata || {};
+      const newProfile = {
+        id: user.id,
+        full_name: meta.full_name || user.email?.split("@")[0] || "User",
+        email: user.email || "",
+        role: meta.role || "student",
+        status: "active" as const,
+        level: meta.level || null,
+        department: meta.department || "Computer Engineering",
+        phone: meta.phone || null,
+        matric_number: meta.matric_number || null,
+      };
+
+      const { data: inserted, error: insertErr } = await supabaseAdmin
+        .from("users")
+        .upsert(newProfile, { onConflict: "id" })
+        .select("id, full_name, email, role, status, level")
+        .single();
+
+      if (insertErr || !inserted) {
+        console.error("Failed to auto-create user profile:", insertErr);
+        return res.status(403).json({ error: "User profile not found in department portal" });
+      }
+
+      profile = inserted;
     }
 
     if (profile.status === "banned") {
