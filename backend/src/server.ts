@@ -4,11 +4,13 @@ import dotenv from "dotenv";
 import multer from "multer";
 import path from "path";
 import { requireAuth, requireRole } from "./middleware/auth.js";
-import { markAttendance, getLiveAttendance } from "./controllers/attendance.controller.js";
+import { markAttendance, getLiveAttendance, manualMarkAttendance, activateSession } from "./controllers/attendance.controller.js";
 import { askAssistant } from "./controllers/ai.controller.js";
 import { submitAssignment, getSubmissions, gradeSubmission } from "./controllers/assignments.controller.js";
 import { getComplaints, replyComplaint } from "./controllers/complaints.controller.js";
 import { uploadAvatar } from "./controllers/users.controller.js";
+import { getAllCourses, getMyCourses, getCourseEnrollments, createCourse, updateCourse, addTimetableSlot, removeTimetableSlot } from "./controllers/courses.controller.js";
+import { getMyEnrollments, enrollInCourse, dropCourse } from "./controllers/enrollments.controller.js";
 
 dotenv.config();
 
@@ -44,11 +46,25 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ── Attendance ────────────────────────────────────────────────────────────────
-// Frontend calls POST /api/attendance/checkin
 app.post("/api/attendance/checkin", requireAuth, requireRole(["student"]), markAttendance);
-// Legacy alias for backwards compat
 app.post("/api/attendance/check-in", requireAuth, requireRole(["student"]), markAttendance);
 app.get("/api/attendance/live/:sessionId", requireAuth, requireRole(["lecturer", "admin"]), getLiveAttendance);
+app.post("/api/attendance/activate", requireAuth, requireRole(["lecturer"]), activateSession);
+app.post("/api/attendance/manual", requireAuth, requireRole(["lecturer", "admin"]), manualMarkAttendance);
+
+// ── Courses ───────────────────────────────────────────────────────────────────
+app.get("/api/courses", requireAuth, getAllCourses);
+app.get("/api/courses/my", requireAuth, requireRole(["lecturer"]), getMyCourses);
+app.get("/api/courses/:id/enrollments", requireAuth, requireRole(["lecturer", "admin"]), getCourseEnrollments);
+app.post("/api/courses", requireAuth, requireRole(["admin"]), createCourse);
+app.patch("/api/courses/:id", requireAuth, requireRole(["admin"]), updateCourse);
+app.post("/api/courses/:id/timetable", requireAuth, requireRole(["admin", "lecturer"]), addTimetableSlot);
+app.delete("/api/courses/:id/timetable/:slotId", requireAuth, requireRole(["admin", "lecturer"]), removeTimetableSlot);
+
+// ── Enrollments ───────────────────────────────────────────────────────────────
+app.get("/api/enrollments/my", requireAuth, requireRole(["student"]), getMyEnrollments);
+app.post("/api/enrollments", requireAuth, requireRole(["student"]), enrollInCourse);
+app.delete("/api/enrollments/:courseId", requireAuth, requireRole(["student"]), dropCourse);
 
 // ── AI Chatbot ────────────────────────────────────────────────────────────────
 // Frontend calls POST /api/ai/chat
