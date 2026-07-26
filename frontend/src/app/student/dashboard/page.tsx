@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   LayoutGrid, ClipboardList, CalendarCheck, MessageCircle, Newspaper, BookOpen,
-  Upload, Loader2, AlertCircle, CheckCircle2, Clock, Camera, User, LogOut, CheckCheck, XCircle, MapPin
+  Upload, Loader2, AlertCircle, CheckCircle2, Clock, Camera, User, LogOut, CheckCheck, XCircle, MapPin, Lock, Unlock
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -446,30 +446,32 @@ function CoursesView({ profile, enrollments, onRefresh }: any) {
   );
 }
 
-/* ─── Attendance View — smart, enrollment-based, GPS pre-checked ─── */
+/* ─── Attendance View — shows ALL enrolled classes with live attendance status ─── */
 function AttendanceView({ enrollments, loading }: any) {
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
   const [activeSessionsMap, setActiveSessionsMap] = useState<{ [classId: string]: any }>({});
   const [distanceMap, setDistanceMap] = useState<{ [classId: string]: number | null }>({});
   const [marking, setMarking] = useState<{ [sessionId: string]: boolean }>({});
-  const [results, setResults] = useState<{ [sessionId: string]: { ok: boolean; msg: string } }>({});
+  const [results, setResults] = useState<{ [sessionId: string]: { ok: boolean; msg: string; details?: any } }>({});
+  const [dayFilter, setDayFilter] = useState<string>("all");
 
+  const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const todayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
 
-  // Gather all classes from enrolled courses that are scheduled TODAY
-  const todayClasses = enrollments.flatMap((e: any) => {
+  // Get ALL classes from enrollments (not just today's)
+  const allClasses = enrollments.flatMap((e: any) => {
     const course = e.course;
     if (!course) return [];
     return (course.classes || [])
-      .filter((cl: any) => cl.day === todayName)
       .map((cl: any) => ({ ...cl, course }));
   });
 
+  const filteredClasses = dayFilter === "all" ? allClasses : allClasses.filter((cl: any) => cl.day === dayFilter);
+
   useEffect(() => {
-    // For each today class, check if there's an active attendance session now
     const now = new Date();
     const map: { [classId: string]: any } = {};
-    todayClasses.forEach((cl: any) => {
+    allClasses.forEach((cl: any) => {
       (cl.attendance_sessions || []).forEach((s: any) => {
         if (new Date(s.opens_at) <= now && now <= new Date(s.closes_at)) {
           map[cl.id] = s;
@@ -479,24 +481,10 @@ function AttendanceView({ enrollments, loading }: any) {
     setActiveSessionsMap(map);
   }, [enrollments]);
 
-  const checkDistance = (session: any): Promise<number> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) return reject("Geolocation not supported");
-      navigator.geolocation.getCurrentPosition(pos => {
-        const lat1 = pos.coords.latitude, lon1 = pos.coords.longitude;
-        const lat2 = session.latitude, lon2 = session.longitude;
-        if (lat2 == null || lon2 == null) return resolve(0);
-        const R = 6371000, dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-        resolve(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-      }, reject);
-    });
-  };
-
   const markAttendance = async (cl: any, session: any) => {
     setMarking(m => ({ ...m, [session.id]: true }));
     try {
-      const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej));
+      const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 10000 }));
       const { data: { session: authSess } } = await supabase.auth.getSession();
       const token = authSess?.access_token || "";
       const r = await fetch(`${BACKEND}/api/attendance/checkin`, {
@@ -505,7 +493,17 @@ function AttendanceView({ enrollments, loading }: any) {
         body: JSON.stringify({ sessionId: session.id, latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
       });
       const data = await r.json();
-      setResults(prev => ({ ...prev, [session.id]: { ok: r.ok, msg: r.ok ? `✅ Marked! (${data.distance}m away)` : data.error } }));
+      if (r.ok) {
+        setResults(prev => ({ ...prev, [session.id]: { ok: true, msg: `Marked! (${data.distance}m away)` } }));
+      } else {
+        const details: any = {};
+        if (data.studentLatitude != null) details.studentLatitude = data.studentLatitude;
+        if (data.studentLongitude != null) details.studentLongitude = data.studentLongitude;
+        if (data.lecturerLatitude != null) details.lecturerLatitude = data.lecturerLatitude;
+        if (data.lecturerLongitude != null) details.lecturerLongitude = data.lecturerLongitude;
+        if (data.distance != null) details.distance = data.distance;
+        setResults(prev => ({ ...prev, [session.id]: { ok: false, msg: data.error || "Check-in failed", details: Object.keys(details).length ? details : undefined } }));
+      }
     } catch (e: any) {
       setResults(prev => ({ ...prev, [session.id]: { ok: false, msg: e.message || "GPS error" } }));
     } finally {
@@ -525,41 +523,96 @@ function AttendanceView({ enrollments, loading }: any) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-4 text-sm text-gray-600">
-        📅 Showing attendance for <strong>{todayName}</strong> — only sessions your lecturer has activated will appear here.
+      <div className="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-4 space-y-3">
+        <p className="text-sm text-gray-600">
+          📅 Showing attendance for all your enrolled classes. Only sessions your admin has activated will appear as <strong>unlocked</strong>.
+        </p>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setDayFilter("all")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${dayFilter === "all" ? "bg-[#0a0a0a] text-white" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+          >
+            All Days
+          </button>
+          {WEEKDAYS.map(day => (
+            <button
+              key={day}
+              onClick={() => setDayFilter(day)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${dayFilter === day ? "bg-[#0a0a0a] text-white" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+            >
+              {day.slice(0, 3)}{day === todayName ? " *" : ""}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {todayClasses.length === 0 ? (
+      {filteredClasses.length === 0 ? (
         <div className="rounded-3xl border border-gray-100 p-10 flex flex-col items-center text-center">
           <CalendarCheck size={32} className="text-gray-200 mb-4" strokeWidth={1.5} />
-          <p className="text-gray-400">No classes scheduled for today</p>
+          <p className="text-gray-400">No classes {dayFilter === "all" ? "scheduled" : `on ${dayFilter}`}</p>
         </div>
       ) : (
-        todayClasses.map((cl: any) => {
+        filteredClasses.map((cl: any) => {
           const session = activeSessionsMap[cl.id];
           const result = session ? results[session.id] : null;
           const isMarking = session ? marking[session.id] : false;
+          const isToday = cl.day === todayName;
+          const isLocked = session?.is_locked ?? true;
 
           return (
-            <div key={cl.id} className={`rounded-3xl border p-6 ${session ? "border-green-200 bg-green-50/20" : "border-gray-100"}`}>
+            <div key={`${cl.id}-${cl.day}`} className={`rounded-3xl border p-6 ${session ? (isLocked ? "border-amber-200 bg-amber-50/20" : "border-green-200 bg-green-50/20") : "border-gray-100"}`}>
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5">{cl.course?.code}</span>
-                    <span className="text-xs text-gray-400">{cl.start_time}–{cl.end_time}</span>
+                    <span className="text-xs text-gray-400">{cl.day} · {cl.start_time}–{cl.end_time}</span>
+                    {isToday && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium">TODAY</span>}
                   </div>
                   <p className="text-sm font-medium">{cl.course?.title}</p>
                   {cl.location?.name && <p className="flex items-center gap-1 text-xs text-gray-400 mt-0.5"><MapPin size={11} /> {cl.location.name}</p>}
                 </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${session ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                  {session ? "Session Open" : "No Active Session"}
-                </span>
+                {session ? (
+                  isLocked ? (
+                    <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-amber-100 text-amber-700">
+                      <Lock size={12} /> Locked
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-green-100 text-green-700">
+                      <Unlock size={12} /> Open
+                    </span>
+                  )
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-gray-100 text-gray-500">
+                    <Lock size={12} /> No Session
+                  </span>
+                )}
               </div>
 
               {session ? (
-                result ? (
-                  <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${result.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-                    {result.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />} {result.msg}
+                isLocked ? (
+                  <div className="flex items-center gap-3 mt-1 rounded-xl bg-amber-50 border border-amber-100 px-4 py-3">
+                    <Lock size={16} className="text-amber-400" />
+                    <p className="text-xs text-amber-600">Attendance is currently <strong>locked</strong> by the admin. Please wait for it to be unlocked.</p>
+                  </div>
+                ) : result ? (
+                  <div className="space-y-2">
+                    <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${result.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+                      {result.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />} {result.msg}
+                    </div>
+                    {!result.ok && result.details && (
+                      <div className="rounded-xl border border-red-200 bg-red-50/50 px-4 py-3 text-xs text-red-600 space-y-1">
+                        <p className="font-semibold text-red-700 mb-1">GPS Mismatch Details</p>
+                        {result.details.studentLatitude != null && result.details.studentLongitude != null && (
+                          <p>Your location: <span className="font-mono">{result.details.studentLatitude.toFixed(6)}, {result.details.studentLongitude.toFixed(6)}</span></p>
+                        )}
+                        {result.details.lecturerLatitude != null && result.details.lecturerLongitude != null && (
+                          <p>Admin location: <span className="font-mono">{result.details.lecturerLatitude.toFixed(6)}, {result.details.lecturerLongitude.toFixed(6)}</span></p>
+                        )}
+                        {result.details.distance != null && (
+                          <p>Distance: <span className="font-mono font-semibold">{result.details.distance}m</span> away (must be within 5m)</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <button
@@ -572,7 +625,10 @@ function AttendanceView({ enrollments, loading }: any) {
                   </button>
                 )
               ) : (
-                <p className="text-xs text-gray-400 italic mt-1">Your lecturer hasn't started attendance yet. Check back when class begins.</p>
+                <div className="flex items-center gap-3 mt-1 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                  <Lock size={16} className="text-gray-300" />
+                  <p className="text-xs text-gray-400">No active session. Your admin hasn&apos;t activated attendance for this class yet.</p>
+                </div>
               )}
             </div>
           );

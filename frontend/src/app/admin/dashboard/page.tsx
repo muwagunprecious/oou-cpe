@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   LayoutGrid, Users, BookOpen, MapPin, Megaphone, BarChart3,
-  Loader2, CheckCircle2, XCircle, Plus, Trash2, X, Eye
+  Loader2, CheckCircle2, XCircle, Plus, Trash2, X, Eye, Radio, Download, Calendar, Lock, Unlock, Navigation
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
@@ -14,8 +14,10 @@ const TABS = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "users", label: "Manage Users", icon: Users },
   { key: "courses", label: "Courses", icon: BookOpen },
+  { key: "classes", label: "Set Class", icon: Calendar },
   { key: "locations", label: "Locations", icon: MapPin },
   { key: "announcements", label: "Announcements", icon: Megaphone },
+  { key: "attendance", label: "Attendance", icon: Radio },
   { key: "analytics", label: "Analytics", icon: BarChart3 },
 ];
 
@@ -34,8 +36,10 @@ export default function AdminDashboard() {
       {active === "overview" && <AdminOverview />}
       {active === "users" && <UsersManager />}
       {active === "courses" && <CoursesManager />}
+      {active === "classes" && <SetClass />}
       {active === "locations" && <LocationsManager />}
       {active === "announcements" && <AnnouncementsManager profile={profile} />}
+      {active === "attendance" && <AdminAttendance />}
       {active === "analytics" && <Analytics />}
     </DashboardLayout>
   );
@@ -607,6 +611,184 @@ function CoursesManager() {
   );
 }
 
+/* ─── Set Class — Admin assigns class slots to courses ─── */
+function SetClass() {
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+  const [courses, setCourses] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    courseId: "", day: "Monday", start_time: "08:00", end_time: "10:00",
+    location_id: "", venue: "", latitude: "", longitude: "", attendance_radius: "5"
+  });
+
+  const todayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || "";
+  };
+
+  const load = async () => {
+    const [{ data: c }, { data: loc }] = await Promise.all([
+      supabase.from("courses").select("id, code, title, level, semester, lecturer:users!lecturer_id(full_name), classes(id, day, start_time, end_time, venue, latitude, longitude, attendance_radius, location:locations(name))").order("level").order("code"),
+      supabase.from("locations").select("id, name, building, latitude, longitude").order("name"),
+    ]);
+    setCourses(c || []);
+    setLocations(loc || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.courseId) return;
+    setSaving(true);
+    const token = await getToken();
+    const loc = locations.find(l => l.id === form.location_id);
+    const res = await fetch(`${BACKEND}/api/courses/${form.courseId}/timetable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        day: form.day, start_time: form.start_time, end_time: form.end_time,
+        location_id: form.location_id || null, venue: form.venue || null,
+        latitude: form.latitude ? parseFloat(form.latitude) : (loc?.latitude ?? null),
+        longitude: form.longitude ? parseFloat(form.longitude) : (loc?.longitude ?? null),
+        attendance_radius: parseFloat(form.attendance_radius) || 5,
+      }),
+    });
+    if (res.ok) {
+      setForm({ courseId: "", day: todayName, start_time: "08:00", end_time: "10:00", location_id: "", venue: "", latitude: "", longitude: "", attendance_radius: "5" });
+      await load();
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (courseId: string, slotId: string) => {
+    const token = await getToken();
+    await fetch(`${BACKEND}/api/courses/${courseId}/timetable/${slotId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  };
+
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  return (
+    <div className="space-y-6">
+      <form onSubmit={handleAdd} className="rounded-3xl border border-gray-100 p-6 sm:p-8 space-y-5">
+        <div>
+          <h2 className="text-lg font-medium">Set a Class</h2>
+          <p className="text-sm text-gray-400">Assign a class slot (timetable) to a course with day, time, and location</p>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium block mb-2">Course</label>
+          <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.courseId} onChange={e => setForm({ ...form, courseId: e.target.value })} required>
+            <option value="">Select a course</option>
+            {courses.map(c => <option key={c.id} value={c.id}>{c.code} — {c.title} ({c.level} Level)</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="text-sm font-medium block mb-2">Day</label>
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.day} onChange={e => setForm({ ...form, day: e.target.value })}>
+              {DAYS.map(d => <option key={d} value={d}>{d} {d === todayName ? "(Today)" : ""}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">Start Time</label>
+            <input type="time" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.start_time} onChange={e => setForm({ ...form, start_time: e.target.value })} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">End Time</label>
+            <input type="time" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium block mb-2">Location (Predefined)</label>
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.location_id} onChange={e => {
+              const loc = locations.find(l => l.id === e.target.value);
+              setForm({ ...form, location_id: e.target.value, latitude: loc?.latitude?.toString() || "", longitude: loc?.longitude?.toString() || "" });
+            }}>
+              <option value="">Custom / Manual GPS</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name} — {l.building}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">Custom Venue Name</label>
+            <input className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" placeholder="e.g. ETF Hall" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="text-sm font-medium block mb-2">GPS Latitude</label>
+            <input type="number" step="any" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" placeholder="6.9038" value={form.latitude} onChange={e => setForm({ ...form, latitude: e.target.value })} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">GPS Longitude</label>
+            <input type="number" step="any" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" placeholder="3.9298" value={form.longitude} onChange={e => setForm({ ...form, longitude: e.target.value })} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-2">Attendance Radius (m)</label>
+            <input type="number" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400/30" value={form.attendance_radius} onChange={e => setForm({ ...form, attendance_radius: e.target.value })} />
+          </div>
+        </div>
+
+        <button type="submit" disabled={saving || !form.courseId} className="flex items-center gap-2 bg-[#0a0a0a] text-white rounded-full px-6 py-3 text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+          {saving ? "Saving..." : "Set Class"}
+        </button>
+      </form>
+
+      {/* All classes across all courses */}
+      <div className="rounded-3xl border border-gray-100 p-6 sm:p-8">
+        <h2 className="text-lg font-medium mb-1">All Scheduled Classes</h2>
+        <p className="text-sm text-gray-400 mb-5">{courses.reduce((acc: number, c: any) => acc + (c.classes?.length || 0), 0)} total slots across {courses.length} courses</p>
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400"><Loader2 size={14} className="animate-spin" /> Loading...</div>
+        ) : (
+          <div className="space-y-3">
+            {courses.map((c: any) => (
+              <div key={c.id} className="border border-gray-100 rounded-2xl overflow-hidden">
+                <div className="flex items-center justify-between p-4 bg-gray-50/50">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5">{c.code}</span>
+                    <span className="text-sm font-medium">{c.title}</span>
+                    <span className="text-xs text-gray-400">{c.level} Level · {c.lecturer?.full_name || "No lecturer"}</span>
+                  </div>
+                  <span className="text-xs text-gray-400">{(c.classes || []).length} slots</span>
+                </div>
+                {(c.classes || []).length > 0 ? (
+                  <div className="p-4 space-y-2">
+                    {c.classes.map((slot: any) => (
+                      <div key={slot.id} className="flex items-center justify-between bg-white rounded-xl border border-gray-100 px-4 py-2.5 text-sm">
+                        <div className="flex items-center gap-3">
+                          <span className="font-medium text-[#0a0a0a]">{slot.day}</span>
+                          <span className="text-gray-500">{slot.start_time} – {slot.end_time}</span>
+                          <span className="text-gray-400 text-xs">{slot.location?.name || slot.venue || "No venue"}</span>
+                          {slot.latitude && <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded-md">GPS {slot.attendance_radius}m</span>}
+                        </div>
+                        <button onClick={() => handleDelete(c.id, slot.id)} className="text-gray-300 hover:text-red-500 transition p-1"><Trash2 size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 text-xs text-gray-400 italic">No class slots set yet</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Locations Manager ─── */
 function LocationsManager() {
   const [locations, setLocations] = useState<any[]>([]);
@@ -796,6 +978,349 @@ function AnnouncementsManager({ profile }: any) {
           ))}
         </ul>
       </div>
+    </div>
+  );
+}
+
+/* ─── Admin Attendance ─── */
+function AdminAttendance() {
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+  const [allCourses, setAllCourses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activating, setActivating] = useState<string | null>(null);
+  const [activeSessionMap, setActiveSessionMap] = useState<{ [classId: string]: any }>({});
+  const [liveData, setLiveData] = useState<{ [sessionId: string]: any }>({});
+  const [manualMarking, setManualMarking] = useState<{ [key: string]: boolean }>({});
+  const [duration, setDuration] = useState("60");
+  const [useMyLocation, setUseMyLocation] = useState(true);
+  const [myLocation, setMyLocation] = useState<{ lat: number; lon: number } | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [lockToggling, setLockToggling] = useState<string | null>(null);
+
+  const todayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || "";
+  };
+
+  const loadCourses = async () => {
+    const { data } = await supabase
+      .from("courses")
+      .select("id, code, title, level, lecturer:users!lecturer_id(full_name), classes(id, day, start_time, end_time, attendance_radius, latitude, longitude, location:locations(name))")
+      .order("level")
+      .order("code");
+    setAllCourses(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadCourses(); }, []);
+
+  const todayClasses = allCourses.flatMap(c =>
+    (c.classes || []).filter((cl: any) => cl.day === todayName).map((cl: any) => ({ ...cl, course: c }))
+  );
+
+  useEffect(() => {
+    const now = new Date();
+    const fetchSessions = async () => {
+      if (!todayClasses.length) return;
+      const classIds = todayClasses.map(c => c.id);
+      const { data } = await supabase
+        .from("attendance_sessions")
+        .select("*")
+        .in("class_id", classIds)
+        .gte("closes_at", now.toISOString());
+      const map: { [classId: string]: any } = {};
+      (data || []).forEach((s: any) => { map[s.class_id] = s; });
+      setActiveSessionMap(map);
+    };
+    fetchSessions();
+  }, [allCourses]);
+
+  const fetchMyLocation = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser");
+      return;
+    }
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMyLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setLocationLoading(false);
+      },
+      (err) => {
+        alert("Could not get your location: " + err.message);
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  useEffect(() => {
+    if (useMyLocation) fetchMyLocation();
+  }, [useMyLocation]);
+
+  const activateAttendance = async (cl: any) => {
+    setActivating(cl.id);
+    try {
+      let lat: number, lon: number;
+      if (useMyLocation && myLocation) {
+        lat = myLocation.lat;
+        lon = myLocation.lon;
+      } else {
+        const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 10000 }));
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+      }
+      const token = await getToken();
+      const r = await fetch(`${BACKEND}/api/attendance/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ classId: cl.id, latitude: lat, longitude: lon, durationMinutes: parseInt(duration) }),
+      });
+      if (r.ok) {
+        const { session } = await r.json();
+        setActiveSessionMap(prev => ({ ...prev, [cl.id]: session }));
+      }
+    } catch (e: any) { alert("Could not activate attendance: " + e.message); }
+    setActivating(null);
+  };
+
+  const fetchLive = async (sessionId: string) => {
+    const token = await getToken();
+    const r = await fetch(`${BACKEND}/api/attendance/live/${sessionId}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.ok) { const data = await r.json(); setLiveData(prev => ({ ...prev, [sessionId]: data })); }
+  };
+
+  const toggleLock = async (sessionId: string) => {
+    setLockToggling(sessionId);
+    try {
+      const token = await getToken();
+      const r = await fetch(`${BACKEND}/api/attendance/lock`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (r.ok) {
+        const { is_locked } = await r.json();
+        setLiveData(prev => {
+          const existing = prev[sessionId];
+          if (existing) {
+            return { ...prev, [sessionId]: { ...existing, isLocked: is_locked, session: { ...existing.session, is_locked } } };
+          }
+          return prev;
+        });
+        setActiveSessionMap(prev => {
+          const updated = { ...prev };
+          for (const [k, v] of Object.entries(updated)) {
+            if (v?.id === sessionId) updated[k] = { ...v, is_locked };
+          }
+          return updated;
+        });
+      }
+    } catch (e: any) { alert("Failed to toggle lock: " + e.message); }
+    setLockToggling(null);
+  };
+
+  const manualMark = async (sessionId: string, studentId: string) => {
+    const key = `${sessionId}-${studentId}`;
+    setManualMarking(m => ({ ...m, [key]: true }));
+    const token = await getToken();
+    await fetch(`${BACKEND}/api/attendance/manual`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sessionId, studentId, status: "present" }),
+    });
+    await fetchLive(sessionId);
+    setManualMarking(m => ({ ...m, [key]: false }));
+  };
+
+  const downloadCsv = (sessionId: string) => {
+    window.open(`${BACKEND}/api/attendance/csv/${sessionId}`, "_blank");
+  };
+
+  if (loading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-10"><Loader2 size={16} className="animate-spin" /> Loading courses...</div>;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">Today is <strong>{todayName}</strong></p>
+            <p className="text-xs text-gray-400 mt-0.5">All classes scheduled for today across every course</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Duration:</label>
+            <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" value={duration} onChange={e => setDuration(e.target.value)}>
+              {["15","30","45","60","90","120"].map(d => <option key={d} value={d}>{d} min</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Use My Location Toggle */}
+        <div className="flex items-center gap-3 bg-white rounded-xl border border-gray-100 px-4 py-3">
+          <div className="flex items-center gap-2 flex-1">
+            <Navigation size={14} className="text-green-600" />
+            <span className="text-xs font-medium">Use My Current Location</span>
+            <span className="text-[10px] text-gray-400">(GPS for attendance — 5m radius)</span>
+          </div>
+          <button
+            onClick={() => setUseMyLocation(!useMyLocation)}
+            className={`relative w-10 h-5 rounded-full transition ${useMyLocation ? "bg-green-500" : "bg-gray-300"}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition ${useMyLocation ? "translate-x-5" : ""}`} />
+          </button>
+          {useMyLocation && myLocation && (
+            <span className="text-[10px] text-green-600 font-mono bg-green-50 px-2 py-0.5 rounded">
+              {myLocation.lat.toFixed(5)}, {myLocation.lon.toFixed(5)}
+            </span>
+          )}
+          {useMyLocation && !myLocation && (
+            <button onClick={fetchMyLocation} disabled={locationLoading} className="text-[10px] text-blue-600 hover:underline disabled:opacity-50">
+              {locationLoading ? "Locating..." : "Get Location"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {todayClasses.length === 0 ? (
+        <div className="rounded-3xl border border-gray-100 p-10 flex flex-col items-center text-center">
+          <Radio size={32} className="text-gray-200 mb-4" strokeWidth={1.5} />
+          <p className="text-gray-400">No classes scheduled for today</p>
+          <p className="text-sm text-gray-400 mt-1">Add timetable slots in the Courses tab first.</p>
+        </div>
+      ) : (
+        todayClasses.map(cl => {
+          const session = activeSessionMap[cl.id];
+          const live = session ? liveData[session.id] : null;
+          const now = new Date();
+          const isLive = session && new Date(session.opens_at) <= now && now <= new Date(session.closes_at);
+          const isLocked = live?.isLocked ?? session?.is_locked ?? false;
+
+          return (
+            <div key={cl.id} className={`rounded-3xl border overflow-hidden ${isLive ? (isLocked ? "border-amber-200" : "border-green-200") : "border-gray-100"}`}>
+              <div className={`flex items-center justify-between px-5 py-4 ${isLive ? (isLocked ? "bg-amber-50/40" : "bg-green-50/40") : "bg-gray-50/50"}`}>
+                <div>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-xs font-bold text-green-700 bg-green-50 rounded-full px-2 py-0.5">{cl.course?.code}</span>
+                    <span className="text-xs text-gray-400">{cl.course?.level} Level</span>
+                    <span className="text-xs text-gray-400">{cl.start_time}–{cl.end_time}</span>
+                    {cl.location?.name && <span className="text-xs text-gray-400">· {cl.location.name}</span>}
+                  </div>
+                  <p className="text-sm font-medium">{cl.course?.title}</p>
+                  {cl.course?.lecturer?.full_name && <p className="text-xs text-gray-500 mt-0.5">Lecturer: {cl.course.lecturer.full_name}</p>}
+                  <p className="text-xs text-gray-500 mt-0.5">GPS radius: {cl.attendance_radius || 5}m</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isLive ? (
+                    <>
+                      {isLocked ? (
+                        <span className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium">
+                          <Lock size={11} /> Locked
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">
+                          <Unlock size={11} /> Live
+                        </span>
+                      )}
+                      <button
+                        onClick={() => toggleLock(session.id)}
+                        disabled={lockToggling === session.id}
+                        className={`flex items-center gap-1 text-xs border rounded-lg px-3 py-1.5 hover:bg-gray-50 transition disabled:opacity-50 ${isLocked ? "border-green-200 text-green-600" : "border-amber-200 text-amber-600"}`}
+                      >
+                        {lockToggling === session.id ? <Loader2 size={11} className="animate-spin" /> : (isLocked ? <Unlock size={11} /> : <Lock size={11} />)}
+                        {isLocked ? "Unlock" : "Lock"}
+                      </button>
+                      <button onClick={() => fetchLive(session.id)} className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition">Refresh</button>
+                      <button onClick={() => downloadCsv(session.id)} className="flex items-center gap-1 text-xs border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition">
+                        <Download size={11} /> CSV
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => activateAttendance(cl)}
+                      disabled={activating === cl.id}
+                      className="flex items-center gap-1.5 bg-green-500 text-white rounded-xl px-4 py-2 text-xs font-medium hover:bg-green-600 transition disabled:opacity-50"
+                    >
+                      {activating === cl.id ? <Loader2 size={12} className="animate-spin" /> : <Radio size={12} />}
+                      {activating === cl.id ? "Starting..." : "Activate Attendance"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {isLive && live && (
+                <div className="px-5 pb-5 pt-3 space-y-4">
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="text-green-700 font-medium">Present: {live.presentCount}</span>
+                    <span className="text-red-500 font-medium">Absent: {live.absentCount}</span>
+                    {live.session?.latitude && live.session?.longitude && (
+                      <span className="text-xs text-gray-400 font-mono">
+                        Admin GPS: {live.session.latitude.toFixed(5)}, {live.session.longitude.toFixed(5)}
+                      </span>
+                    )}
+                  </div>
+
+                  {isLocked && (
+                    <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700">
+                      <Lock size={13} />
+                      Attendance is <strong>locked</strong> — students cannot mark attendance until you unlock it.
+                    </div>
+                  )}
+
+                  {live.present?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Present</p>
+                      <div className="space-y-1.5">
+                        {live.present.map((r: any) => (
+                          <div key={r.id} className="flex items-center gap-2 text-sm bg-green-50/50 rounded-xl px-3 py-2">
+                            <div className="h-7 w-7 rounded-full bg-green-100 overflow-hidden shrink-0">
+                              {r.users?.avatar_url ? <img src={r.users.avatar_url} className="w-full h-full object-cover" /> : <span className="w-full h-full flex items-center justify-center text-[10px] font-bold text-green-700">{r.users?.full_name?.charAt(0)}</span>}
+                            </div>
+                            <span className="flex-1">{r.users?.full_name} <span className="text-gray-400 text-xs">· {r.users?.matric_number}</span></span>
+                            {r.manually_added && <span className="text-xs text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded">Manual</span>}
+                            <CheckCircle2 size={14} className="text-green-500 shrink-0" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {live.absent?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Absent — Mark Manually</p>
+                      <div className="space-y-1.5">
+                        {live.absent.map((u: any) => {
+                          const key = `${session.id}-${u.id}`;
+                          return (
+                            <div key={u.id} className="flex items-center gap-2 text-sm bg-red-50/30 rounded-xl px-3 py-2">
+                              <div className="h-7 w-7 rounded-full bg-gray-100 overflow-hidden shrink-0">
+                                {u.avatar_url ? <img src={u.avatar_url} className="w-full h-full object-cover" /> : <span className="w-full h-full flex items-center justify-center text-[10px] font-bold text-gray-500">{u.full_name?.charAt(0)}</span>}
+                              </div>
+                              <span className="flex-1">{u.full_name} <span className="text-gray-400 text-xs">· {u.matric_number}</span></span>
+                              <button
+                                onClick={() => manualMark(session.id, u.id)}
+                                disabled={manualMarking[key]}
+                                className="text-xs bg-[#0a0a0a] text-white rounded-lg px-2.5 py-1 hover:bg-gray-800 transition disabled:opacity-50"
+                              >
+                                {manualMarking[key] ? <Loader2 size={11} className="animate-spin inline" /> : "Mark Present"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {!live.present?.length && !live.absent?.length && (
+                    <p className="text-sm text-gray-400">No enrolled students yet.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }

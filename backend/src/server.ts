@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import multer from "multer";
 import path from "path";
 import { requireAuth, requireRole } from "./middleware/auth.js";
-import { markAttendance, getLiveAttendance, manualMarkAttendance, activateSession } from "./controllers/attendance.controller.js";
+import { markAttendance, getLiveAttendance, manualMarkAttendance, activateSession, getAttendanceCSV, toggleSessionLock } from "./controllers/attendance.controller.js";
 import { askAssistant } from "./controllers/ai.controller.js";
 import { submitAssignment, getSubmissions, gradeSubmission } from "./controllers/assignments.controller.js";
 import { getComplaints, replyComplaint } from "./controllers/complaints.controller.js";
@@ -49,8 +49,10 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/attendance/checkin", requireAuth, requireRole(["student"]), markAttendance);
 app.post("/api/attendance/check-in", requireAuth, requireRole(["student"]), markAttendance);
 app.get("/api/attendance/live/:sessionId", requireAuth, requireRole(["lecturer", "admin"]), getLiveAttendance);
-app.post("/api/attendance/activate", requireAuth, requireRole(["lecturer"]), activateSession);
+app.get("/api/attendance/csv/:sessionId", requireAuth, requireRole(["lecturer", "admin"]), getAttendanceCSV);
+app.post("/api/attendance/activate", requireAuth, requireRole(["lecturer", "admin"]), activateSession);
 app.post("/api/attendance/manual", requireAuth, requireRole(["lecturer", "admin"]), manualMarkAttendance);
+app.patch("/api/attendance/lock", requireAuth, requireRole(["admin"]), toggleSessionLock);
 
 // ── Courses ───────────────────────────────────────────────────────────────────
 app.get("/api/courses", requireAuth, getAllCourses);
